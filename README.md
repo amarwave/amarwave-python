@@ -1,0 +1,173 @@
+# ⚡ AmarWave Python Client
+
+Real-time WebSocket client for AmarWave servers — async, typed, zero boilerplate.
+
+[![PyPI version](https://img.shields.io/pypi/v/amarwave)](https://pypi.org/project/amarwave/)
+[![Python](https://img.shields.io/pypi/pyversions/amarwave)](https://pypi.org/project/amarwave/)
+[![License](https://img.shields.io/pypi/l/amarwave)](LICENSE)
+
+---
+
+## Installation
+
+```bash
+pip install amarwave
+```
+
+---
+
+## Quick Start
+
+```python
+import asyncio
+from amarwave import AmarWave
+
+async def main():
+    aw = AmarWave(
+        app_key    = "YOUR_APP_KEY",
+        app_secret = "YOUR_APP_SECRET",
+        ws_host    = "localhost",
+        ws_port    = 3001,
+        api_port   = 8000,
+    )
+
+    # Subscribe — auto-connects
+    ch = await aw.subscribe("public-chat")
+
+    # Listen for messages
+    ch.bind("message", lambda data: print(data["user"], data["text"]))
+
+    # Send a message
+    await ch.publish("message", {"user": "Ali", "text": "Hello!"})
+
+    # Keep alive
+    await aw.listen()
+
+asyncio.run(main())
+```
+
+---
+
+## Configuration
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `app_key` | str | `""` | Your app key **(required)** |
+| `app_secret` | str | `""` | App secret for HMAC auth |
+| `ws_host` | str | `"localhost"` | WebSocket hostname |
+| `ws_port` | int | `3001` | WebSocket port |
+| `wss_port` | int | `443` | WebSocket TLS port |
+| `api_host` | str | *(ws_host)* | HTTP API hostname |
+| `api_port` | int | `8000` | HTTP API port |
+| `force_tls` | bool | `False` | Force WSS + HTTPS |
+| `cluster` | str | `"default"` | `"ap1"` \| `"ap2"` \| `"eu"` \| `"us"` |
+| `auth_endpoint` | str | `"/broadcasting/auth"` | Server auth URL |
+| `auth_headers` | dict | `{}` | Headers sent to auth endpoint |
+| `reconnect_delay` | float | `1.0` | Base reconnect delay (seconds) |
+| `max_reconnect_delay` | float | `30.0` | Max reconnect delay (seconds) |
+| `max_retries` | int | `5` | Max retries (0 = infinite) |
+| `activity_timeout` | float | `120.0` | Ping after inactivity (seconds) |
+| `pong_timeout` | float | `30.0` | Reconnect if no pong (seconds) |
+| `disable_stats` | bool | `False` | Disable stat reporting |
+
+---
+
+## Channel API
+
+```python
+ch = await aw.subscribe("public-chat")
+
+ch.bind("message", handler)          # listen for event
+ch.bind_global(lambda e, d: ...)     # listen for all events
+ch.unbind("message", handler)        # remove listener
+await ch.publish("message", data)    # send via HTTP API → bool
+await aw.publish("ch", "ev", data)   # top-level shortcut
+
+ch.name        # "public-chat"
+ch.subscribed  # True when server confirmed
+```
+
+---
+
+## Connection Events
+
+```python
+aw.bind("connecting",   lambda _: print("Connecting…"))
+aw.bind("connected",    lambda _: print(f"Connected: {aw.socket_id}"))
+aw.bind("disconnected", lambda _: print("Disconnected"))
+aw.bind("error",        lambda e: print(f"Error: {e}"))
+```
+
+---
+
+## Private & Presence Channels
+
+```python
+# Client-side HMAC (dev only)
+aw = AmarWave(app_key="KEY", app_secret="SECRET")
+ch = await aw.subscribe("private-orders")    # auto-signed
+ch = await aw.subscribe("presence-room-1")  # auto-signed
+
+# Production: server-side auth
+aw = AmarWave(
+    app_key       = "KEY",
+    auth_endpoint = "https://yourapp.io/api/broadcasting/auth",
+    auth_headers  = {"Authorization": f"Bearer {token}"},
+)
+```
+
+---
+
+## Django Integration
+
+```python
+# One-shot publish from a sync view
+import asyncio
+from amarwave import AmarWave
+
+def notify_user(user_id: int, message: str) -> None:
+    async def _send():
+        aw = AmarWave(app_key="KEY", app_secret="SECRET")
+        await aw.publish(f"private-user-{user_id}", "notification", {"message": message})
+    asyncio.run(_send())
+```
+
+---
+
+## FastAPI Integration
+
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from amarwave import AmarWave
+
+aw = AmarWave(app_key="KEY", app_secret="SECRET")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ch = await aw.subscribe("public-updates")
+    ch.bind("message", lambda d: print(d))
+    yield
+    await aw.disconnect()
+
+app = FastAPI(lifespan=lifespan)
+
+@app.post("/notify")
+async def notify(message: str):
+    await aw.publish("public-updates", "message", {"text": message})
+    return {"ok": True}
+```
+
+---
+
+## Requirements
+
+- Python 3.10+
+- `websockets >= 12.0`
+- `httpx >= 0.27.0`
+
+---
+
+## License
+
+MIT © AmarWave
