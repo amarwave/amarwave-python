@@ -7,16 +7,16 @@ import asyncio
 import json
 import logging
 from typing import Any
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 
 import httpx
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from .channel  import Channel
-from .crypto   import generate_uid, hmac_sha256
-from .emitter  import EventEmitter
-from .types    import CLUSTERS, ConnectionState
+from .channel import Channel
+from .crypto  import generate_uid, hmac_sha256
+from .emitter import EventEmitter
+from .types   import CLUSTERS, ConnectionState
 
 logger = logging.getLogger("amarwave")
 
@@ -46,53 +46,25 @@ class AmarWave(EventEmitter):
         self,
         *,
         app_key:             str,
-        app_secret:          str  = "",
-        ws_host:             str  = "localhost",
-        ws_port:             int  = 3001,
-        wss_port:            int  = 443,
-        api_host:            str  = "",
-        api_port:            int  = 8000,
-        api_path:            str  = "",
-        ws_path:             str  = "",
-        force_tls:           bool = False,
-        cluster:             str  = "default",
-        auth_endpoint:       str  = "/broadcasting/auth",
+        app_secret:          str   = "",
+        cluster:             str   = "default",
+        auth_endpoint:       str   = "/broadcasting/auth",
         auth_headers:        dict[str, str] | None = None,
         reconnect_delay:     float = 1.0,
         max_reconnect_delay: float = 30.0,
         max_retries:         int   = 5,
         activity_timeout:    float = 120.0,
         pong_timeout:        float = 30.0,
-        disable_stats:       bool  = False,
     ) -> None:
         super().__init__()
 
         self.app_key    = app_key
         self.app_secret = app_secret
-        self.force_tls  = force_tls
         self.cluster    = cluster
 
-        # Resolve cluster if ws_host is not explicitly set
-        cluster_cfg = CLUSTERS.get(cluster.lower(), CLUSTERS["default"])
-        if ws_host == "localhost" and cluster.lower() not in ("default", "local"):
-            use_tls   = force_tls
-            base_url  = cluster_cfg["wss"] if use_tls else cluster_cfg["ws"]
-            parsed    = urlparse(base_url)
-            ws_host   = parsed.hostname or ws_host
-            ws_port   = parsed.port or (443 if use_tls else 80)
-            wss_port  = urlparse(cluster_cfg["wss"]).port or 443
-            if not api_host:
-                api_parsed = urlparse(cluster_cfg["api"])
-                api_host   = api_parsed.hostname or ""
-                api_port   = api_parsed.port or (443 if cluster_cfg["api"].startswith("https") else 80)
-
-        self.ws_host  = ws_host
-        self.ws_port  = ws_port
-        self.wss_port = wss_port
-        self.api_host = api_host or ws_host
-        self.api_port = api_port
-        self.api_path = api_path or __import__('os').environ.get("AMARWAVE_API_PATH", "/api/v1/trigger")
-        self.ws_path  = ws_path  or __import__('os').environ.get("AMARWAVE_WS_PATH",  "/ws")
+        cluster_cfg    = CLUSTERS.get(cluster.lower(), CLUSTERS["default"])
+        self._ws_base  = cluster_cfg["wss"]
+        self._api_base = cluster_cfg["api"]
 
         self.auth_endpoint = auth_endpoint
         self.auth_headers  = auth_headers or {}
@@ -102,32 +74,27 @@ class AmarWave(EventEmitter):
         self.max_retries         = max_retries
         self.activity_timeout    = activity_timeout
         self.pong_timeout        = pong_timeout
-        self.disable_stats       = disable_stats
 
         # Public state
-        self.socket_id: str | None    = None
-        self.state: ConnectionState   = "initialized"
+        self.socket_id: str | None   = None
+        self.state: ConnectionState  = "initialized"
 
         # Internal
-        self._ws:           Any                    = None
-        self._channels:     dict[str, Channel]     = {}
-        self._retries:      int                    = 0
-        self._stop:         bool                   = False
-        self._connected:    asyncio.Event           = asyncio.Event()
-        self._recv_task:    asyncio.Task | None     = None
-        self._ping_task:    asyncio.Task | None     = None
+        self._ws:        Any                 = None
+        self._channels:  dict[str, Channel]  = {}
+        self._retries:   int                 = 0
+        self._stop:      bool                = False
+        self._connected: asyncio.Event       = asyncio.Event()
+        self._recv_task: asyncio.Task | None = None
 
     # ─── URLs ─────────────────────────────────────────────────────────────────
 
     def _ws_url(self) -> str:
-        proto = "wss" if self.force_tls else "ws"
-        port  = self.wss_port if self.force_tls else self.ws_port
         params = urlencode({"app_key": self.app_key})
-        return f"{proto}://{self.ws_host}:{port}{self.ws_path}?{params}"
+        return f"{self._ws_base}/ws?{params}"
 
     def _api_url(self) -> str:
-        proto = "https" if self.force_tls else "http"
-        return f"{proto}://{self.api_host}:{self.api_port}{self.api_path}"
+        return f"{self._api_base}/api/v1/trigger"
 
     # ─── Connect ──────────────────────────────────────────────────────────────
 
@@ -225,11 +192,9 @@ class AmarWave(EventEmitter):
         self._connected.clear()
         for ch in self._channels.values():
             ch.subscribed = False
-        if self._stop:
-            self._set_state("disconnected")
-            return
         self._set_state("disconnected")
-        await self._schedule_reconnect()
+        if not self._stop:
+            await self._schedule_reconnect()
 
     async def _schedule_reconnect(self) -> None:
         if self.max_retries > 0 and self._retries >= self.max_retries:
@@ -263,7 +228,7 @@ class AmarWave(EventEmitter):
         Example::
 
             ch = await aw.subscribe("public-chat")
-            ch.bind("message", lambda d: print(d))
+            ch.bind("message", lambda data: print(data))
         """
         if channel_name in self._channels:
             return self._channels[channel_name]
@@ -271,11 +236,9 @@ class AmarWave(EventEmitter):
         ch = Channel(channel_name, self)
         self._channels[channel_name] = ch
 
-        # Auto-connect if not already connected
         if self.state != "connected":
             if self.state == "initialized":
                 asyncio.create_task(self._open())
-            # Wait until connected before sending subscribe
             await self._connected.wait()
 
         await self._do_subscribe(ch)
@@ -306,17 +269,16 @@ class AmarWave(EventEmitter):
 
     async def _http_publish(self, channel: str, event: str, data: Any) -> bool:
         """Internal HTTP POST to /api/v1/trigger."""
-        url  = self._api_url()
         body = {
             "app_key":    self.app_key,
             "app_secret": self.app_secret,
             "channel":    channel,
-            "name":       event,
+            "event":      event,
             "data":       data,
         }
         try:
             async with httpx.AsyncClient() as client:
-                res = await client.post(url, json=body, timeout=10.0)
+                res = await client.post(self._api_url(), json=body, timeout=10.0)
             if res.status_code >= 400:
                 logger.warning("[AmarWave] Publish failed %d: %s", res.status_code, res.text)
                 return False
@@ -355,7 +317,7 @@ class AmarWave(EventEmitter):
         await self._raw_send(payload)
 
     async def _server_auth(self, ch: Channel, payload: dict) -> None:
-        """Fetch auth token from server authEndpoint."""
+        """Fetch auth token from server auth_endpoint."""
         headers = {"Content-Type": "application/json", **self.auth_headers}
         body    = {"socket_id": self.socket_id, "channel_name": ch.name}
         async with httpx.AsyncClient() as client:
@@ -378,8 +340,7 @@ class AmarWave(EventEmitter):
         while not self._stop:
             await asyncio.sleep(self.activity_timeout)
             if self._ws and self.state == "connected":
-                ping_data = {"stats": False} if self.disable_stats else {}
-                await self._raw_send({"event": "amarwave:ping", "data": ping_data})
+                await self._raw_send({"event": "amarwave:ping", "data": {}})
 
     # ─── Utilities ────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
-# ⚡ AmarWave Python Client
+# amarwave
 
-Real-time WebSocket client for AmarWave servers — async, typed, zero boilerplate.
+Official Python client for [AmarWave](https://amarwave.com) real-time messaging — async, typed, zero boilerplate.
 
 [![PyPI version](https://img.shields.io/pypi/v/amarwave)](https://pypi.org/project/amarwave/)
 [![Python](https://img.shields.io/pypi/pyversions/amarwave)](https://pypi.org/project/amarwave/)
@@ -26,22 +26,13 @@ async def main():
     aw = AmarWave(
         app_key    = "YOUR_APP_KEY",
         app_secret = "YOUR_APP_SECRET",
-        ws_host    = "localhost",
-        ws_port    = 3001,
-        api_port   = 8000,
     )
 
-    # Subscribe — auto-connects
     ch = await aw.subscribe("public-chat")
-
-    # Listen for messages
     ch.bind("message", lambda data: print(data["user"], data["text"]))
 
-    # Send a message
     await ch.publish("message", {"user": "Ali", "text": "Hello!"})
-
-    # Keep alive
-    await aw.listen()
+    await aw.listen()  # keep alive forever
 
 asyncio.run(main())
 ```
@@ -50,25 +41,34 @@ asyncio.run(main())
 
 ## Configuration
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `app_key` | str | `""` | Your app key **(required)** |
-| `app_secret` | str | `""` | App secret for HMAC auth |
-| `ws_host` | str | `"localhost"` | WebSocket hostname |
-| `ws_port` | int | `3001` | WebSocket port |
-| `wss_port` | int | `443` | WebSocket TLS port |
-| `api_host` | str | *(ws_host)* | HTTP API hostname |
-| `api_port` | int | `8000` | HTTP API port |
-| `force_tls` | bool | `False` | Force WSS + HTTPS |
-| `cluster` | str | `"default"` | `"ap1"` \| `"ap2"` \| `"eu"` \| `"us"` |
-| `auth_endpoint` | str | `"/broadcasting/auth"` | Server auth URL |
-| `auth_headers` | dict | `{}` | Headers sent to auth endpoint |
-| `reconnect_delay` | float | `1.0` | Base reconnect delay (seconds) |
-| `max_reconnect_delay` | float | `30.0` | Max reconnect delay (seconds) |
-| `max_retries` | int | `5` | Max retries (0 = infinite) |
-| `activity_timeout` | float | `120.0` | Ping after inactivity (seconds) |
-| `pong_timeout` | float | `30.0` | Reconnect if no pong (seconds) |
-| `disable_stats` | bool | `False` | Disable stat reporting |
+| Parameter             | Type  | Default          | Description                                    |
+|-----------------------|-------|------------------|------------------------------------------------|
+| `app_key`             | str   | —                | Your app key **(required)**                    |
+| `app_secret`          | str   | `""`             | App secret for HMAC channel auth               |
+| `cluster`             | str   | `"default"`      | `"default"` \| `"eu"` \| `"us"` \| `"ap1"` \| `"ap2"` |
+| `auth_endpoint`       | str   | `"/broadcasting/auth"` | Server auth URL for private/presence channels |
+| `auth_headers`        | dict  | `{}`             | Headers sent to the auth endpoint              |
+| `reconnect_delay`     | float | `1.0`            | Base reconnect delay in seconds                |
+| `max_reconnect_delay` | float | `30.0`           | Max reconnect delay in seconds                 |
+| `max_retries`         | int   | `5`              | Max reconnect attempts (0 = infinite)          |
+| `activity_timeout`    | float | `120.0`          | Seconds between keepalive pings                |
+| `pong_timeout`        | float | `30.0`           | Seconds to wait for pong before reconnecting   |
+
+### Clusters
+
+All clusters connect to `amarwave.com`. The `cluster` parameter is reserved for future regional routing.
+
+| Cluster   | WebSocket                  | API                        |
+|-----------|----------------------------|----------------------------|
+| `default` | `wss://amarwave.com`       | `https://amarwave.com`     |
+| `eu`      | `wss://amarwave.com`       | `https://amarwave.com`     |
+| `us`      | `wss://amarwave.com`       | `https://amarwave.com`     |
+| `ap1`     | `wss://amarwave.com`       | `https://amarwave.com`     |
+| `ap2`     | `wss://amarwave.com`       | `https://amarwave.com`     |
+
+```python
+aw = AmarWave(app_key="KEY", app_secret="SECRET", cluster="eu")
+```
 
 ---
 
@@ -77,14 +77,14 @@ asyncio.run(main())
 ```python
 ch = await aw.subscribe("public-chat")
 
-ch.bind("message", handler)          # listen for event
-ch.bind_global(lambda e, d: ...)     # listen for all events
-ch.unbind("message", handler)        # remove listener
-await ch.publish("message", data)    # send via HTTP API → bool
-await aw.publish("ch", "ev", data)   # top-level shortcut
+ch.bind("message", handler)           # listen for event
+ch.bind_global(lambda e, d: ...)      # listen for all events on this channel
+ch.unbind("message", handler)         # remove listener
+await ch.publish("message", data)     # publish via HTTP API → bool
+await aw.publish("ch", "ev", data)    # top-level publish shortcut
 
 ch.name        # "public-chat"
-ch.subscribed  # True when server confirmed
+ch.subscribed  # True when server confirmed subscription
 ```
 
 ---
@@ -103,17 +103,18 @@ aw.bind("error",        lambda e: print(f"Error: {e}"))
 ## Private & Presence Channels
 
 ```python
-# Client-side HMAC (dev only)
+# Client-side HMAC auth (app_secret required)
 aw = AmarWave(app_key="KEY", app_secret="SECRET")
 ch = await aw.subscribe("private-orders")    # auto-signed
 ch = await aw.subscribe("presence-room-1")  # auto-signed
 
-# Production: server-side auth
+# Server-side auth (omit app_secret, provide auth_endpoint)
 aw = AmarWave(
     app_key       = "KEY",
-    auth_endpoint = "https://yourapp.io/api/broadcasting/auth",
+    auth_endpoint = "https://yourapp.com/api/broadcasting/auth",
     auth_headers  = {"Authorization": f"Bearer {token}"},
 )
+ch = await aw.subscribe("private-orders")
 ```
 
 ---
@@ -121,15 +122,15 @@ aw = AmarWave(
 ## Django Integration
 
 ```python
-# One-shot publish from a sync view
 import asyncio
 from amarwave import AmarWave
 
-def notify_user(user_id: int, message: str) -> None:
-    async def _send():
+# One-shot publish from a sync Django view
+def notify_user(user_id: int, message: str) -> bool:
+    async def _publish() -> bool:
         aw = AmarWave(app_key="KEY", app_secret="SECRET")
-        await aw.publish(f"private-user-{user_id}", "notification", {"message": message})
-    asyncio.run(_send())
+        return await aw.publish(f"private-user-{user_id}", "notification", {"message": message})
+    return asyncio.run(_publish())
 ```
 
 ---

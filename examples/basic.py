@@ -11,9 +11,6 @@ async def main() -> None:
     aw = AmarWave(
         app_key    = "YOUR_APP_KEY",
         app_secret = "YOUR_APP_SECRET",
-        ws_host    = "localhost",
-        ws_port    = 3001,
-        api_port   = 8000,
     )
 
     # 2. Connection lifecycle events (optional)
@@ -29,7 +26,7 @@ async def main() -> None:
     def on_message(data: dict) -> None:
         print(f"[{data['user']}] {data['text']}")
 
-    ch.bind("subscribed", lambda _: print("✓ Joined channel"))
+    ch.bind("subscribed", lambda _: print("Joined channel"))
     ch.bind("message",    on_message)
 
     # 5. Publish a message
