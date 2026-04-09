@@ -1,6 +1,7 @@
 """
 AmarWave — Type definitions.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable, Literal
@@ -11,7 +12,7 @@ ConnectionState = Literal["initialized", "connecting", "connected", "disconnecte
 
 # ── Callback types ────────────────────────────────────────────────────────────
 
-EventCallback  = Callable[[Any], None]
+EventCallback = Callable[[Any], None]
 GlobalCallback = Callable[[str, Any], None]
 
 # ── Cluster map ───────────────────────────────────────────────────────────────
@@ -19,10 +20,18 @@ GlobalCallback = Callable[[str, Any], None]
 ClusterName = Literal["default", "local", "eu", "us", "ap1", "ap2"]
 
 CLUSTERS: dict[str, dict[str, str]] = {
-    "default": {"ws": "ws://amarwave.com",    "wss": "wss://amarwave.com",    "api": "https://amarwave.com"},
-    "local":   {"ws": "ws://localhost:3001",  "wss": "wss://localhost:3001",  "api": "http://localhost:8000"},
-    "eu":      {"ws": "ws://amarwave.com",    "wss": "wss://amarwave.com",    "api": "https://amarwave.com"},
-    "us":      {"ws": "ws://amarwave.com",    "wss": "wss://amarwave.com",    "api": "https://amarwave.com"},
-    "ap1":     {"ws": "ws://amarwave.com",    "wss": "wss://amarwave.com",    "api": "https://amarwave.com"},
-    "ap2":     {"ws": "ws://amarwave.com",    "wss": "wss://amarwave.com",    "api": "https://amarwave.com"},
+    "default": {
+        "ws": "ws://amarwave.com",
+        "wss": "wss://amarwave.com",
+        "api": "https://amarwave.com",
+    },
+    "local": {
+        "ws": "ws://amarwave.com",
+        "wss": "wss://amarwave.com",
+        "api": "https://amarwave.com",
+    },
+    "eu": {"ws": "ws://amarwave.com", "wss": "wss://amarwave.com", "api": "https://amarwave.com"},
+    "us": {"ws": "ws://amarwave.com", "wss": "wss://amarwave.com", "api": "https://amarwave.com"},
+    "ap1": {"ws": "ws://amarwave.com", "wss": "wss://amarwave.com", "api": "https://amarwave.com"},
+    "ap2": {"ws": "ws://amarwave.com", "wss": "wss://amarwave.com", "api": "https://amarwave.com"},
 }
