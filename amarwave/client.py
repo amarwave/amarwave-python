@@ -63,7 +63,8 @@ class AmarWave(EventEmitter):
         self.cluster    = cluster
 
         cluster_cfg    = CLUSTERS.get(cluster.lower(), CLUSTERS["default"])
-        self._ws_base  = cluster_cfg["wss"]
+        # Use plain ws:// for local, wss:// for all cloud clusters
+        self._ws_base  = cluster_cfg["ws"] if cluster.lower() == "local" else cluster_cfg["wss"]
         self._api_base = cluster_cfg["api"]
 
         self.auth_endpoint = auth_endpoint
