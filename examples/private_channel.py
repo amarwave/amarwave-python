@@ -10,9 +10,7 @@ async def main() -> None:
     aw = AmarWave(
         app_key    = "YOUR_APP_KEY",
         app_secret = "YOUR_APP_SECRET",   # signs private channels automatically
-        ws_host    = "localhost",
-        ws_port    = 3001,
-        api_port   = 8000,
+        cluster    = "default",
     )
 
     # Private channel — auth is handled automatically using app_secret

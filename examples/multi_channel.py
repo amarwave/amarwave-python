@@ -8,11 +8,9 @@ from amarwave import AmarWave
 
 async def main() -> None:
     aw = AmarWave(
-        app_key    = "YOUR_APP_KEY",
+        app_key = "YOUR_APP_KEY",
         app_secret = "YOUR_APP_SECRET",
-        ws_host    = "localhost",
-        ws_port    = 3001,
-        api_port   = 8000,
+        cluster = "default",
     )
 
     # Subscribe to multiple channels
