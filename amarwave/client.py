@@ -274,7 +274,7 @@ class AmarWave(EventEmitter):
             "app_key":    self.app_key,
             "app_secret": self.app_secret,
             "channel":    channel,
-            "event":      event,
+            "name":       event,
             "data":       data,
         }
         try:
