@@ -81,12 +81,15 @@ class AmarWave(EventEmitter):
         self.state: ConnectionState  = "initialized"
 
         # Internal
-        self._ws:        Any                 = None
-        self._channels:  dict[str, Channel]  = {}
-        self._retries:   int                 = 0
-        self._stop:      bool                = False
-        self._connected: asyncio.Event       = asyncio.Event()
-        self._recv_task: asyncio.Task | None = None
+        self._ws:              Any                 = None
+        self._channels:        dict[str, Channel]  = {}
+        self._retries:         int                 = 0
+        self._stop:            bool                = False
+        self._conn_failed:     bool                = False   # set when max retries exhausted
+        self._connected:       asyncio.Event       = asyncio.Event()
+        self._recv_task:       asyncio.Task | None = None
+        self._last_msg_time:   float               = 0.0     # monotonic time of last received frame
+        self._pong_received:   asyncio.Event       = asyncio.Event()
 
     # ─── URLs ─────────────────────────────────────────────────────────────────
 
@@ -102,6 +105,8 @@ class AmarWave(EventEmitter):
     async def connect(self) -> None:
         """Open the WebSocket connection (called automatically by subscribe)."""
         self._stop = False
+        self._conn_failed = False
+        self._connected.clear()
         await self._open()
 
     async def _open(self) -> None:
@@ -129,6 +134,7 @@ class AmarWave(EventEmitter):
             await self._on_close()
 
     async def _handle_raw(self, raw: str) -> None:
+        self._last_msg_time = asyncio.get_event_loop().time()   # reset inactivity clock
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
@@ -165,7 +171,7 @@ class AmarWave(EventEmitter):
             self._emit("error", Exception(msg_text))
 
         elif event == "amarwave:pong":
-            pass  # keepalive acknowledged
+            self._pong_received.set()   # unblock any listen() waiting for pong
 
         elif event == "amarwave_internal:subscription_succeeded":
             ch = self._channels.get(channel)
@@ -200,6 +206,8 @@ class AmarWave(EventEmitter):
     async def _schedule_reconnect(self) -> None:
         if self.max_retries > 0 and self._retries >= self.max_retries:
             logger.warning("[AmarWave] Max retries reached — giving up.")
+            self._conn_failed = True
+            self._connected.set()   # unblock any subscribe() awaiting connection
             return
         delay = min(self.reconnect_delay * (2 ** self._retries), self.max_reconnect_delay)
         self._retries += 1
@@ -241,6 +249,8 @@ class AmarWave(EventEmitter):
             if self.state == "initialized":
                 asyncio.create_task(self._open())
             await self._connected.wait()
+            if self._conn_failed:
+                raise ConnectionError("AmarWave connection failed — max retries reached")
 
         await self._do_subscribe(ch)
         return ch
@@ -331,17 +341,46 @@ class AmarWave(EventEmitter):
 
     async def listen(self) -> None:
         """
-        Block forever, keeping the connection alive with periodic pings.
-        Call this at the end of your main() to prevent the program from exiting.
+        Block forever, keeping the connection alive with inactivity-based pings.
+        Sends a ping after ``activity_timeout`` seconds of silence and expects a
+        pong within ``pong_timeout`` seconds; reconnects if none arrives.
 
-        Example::
+        Call this at the end of your main() to prevent the program from exiting::
 
             await aw.listen()
         """
+        loop = asyncio.get_event_loop()
+        self._last_msg_time = loop.time()   # initialise so first tick is correct
+
         while not self._stop:
-            await asyncio.sleep(self.activity_timeout)
-            if self._ws and self.state == "connected":
-                await self._raw_send({"event": "amarwave:ping", "data": {}})
+            if self.state != "connected" or self._ws is None:
+                await asyncio.sleep(0.5)
+                continue
+
+            elapsed   = loop.time() - self._last_msg_time
+            remaining = self.activity_timeout - elapsed
+
+            if remaining > 0:
+                # Sleep in short chunks so we react to _stop quickly
+                await asyncio.sleep(min(remaining, 1.0))
+                continue
+
+            # Inactivity timeout — send ping and wait for pong
+            self._pong_received.clear()
+            await self._raw_send({"event": "amarwave:ping", "data": {}})
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(self._pong_received.wait()),
+                    timeout=self.pong_timeout,
+                )
+                # Pong received — update the clock so we don't immediately ping again
+                self._last_msg_time = loop.time()
+            except asyncio.TimeoutError:
+                logger.warning("[AmarWave] Pong timeout — closing connection")
+                if self._ws:
+                    await self._ws.close()
+                # _on_close() / _schedule_reconnect() will handle the rest
+                return
 
     # ─── Utilities ────────────────────────────────────────────────────────────
 
